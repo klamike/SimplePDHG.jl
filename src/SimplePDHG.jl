@@ -34,9 +34,12 @@ end
 
 # In the function called tolerance_LP, change the type of A to SparseArrays.SparseMatrixCSC{T,Int} 
 
-function tolerance_LP(A::SparseArrays.SparseMatrixCSC{T,Int}, b::AbstractVector{T}, c::AbstractVector{T}, x::AbstractVector{T}, y::AbstractVector{T}) where T<:Real
+function tolerance_LP(A::SparseArrays.SparseMatrixCSC{T,Int}, b::AbstractVector{T}, c::AbstractVector{T}, x::AbstractVector{T}, y::AbstractVector{T}, z::AbstractVector{T}) where T<:Real
     ϵ = LinearAlgebra.norm(A*x-b,2)/(1+LinearAlgebra.norm(b,2)) + LinearAlgebra.norm(project_nonnegative(-A'*y-c), 2)/(1+LinearAlgebra.norm(c,2)) + LinearAlgebra.norm(c'*x + b'*y, 2)/(1+abs(c'*x)+abs(b'y))
-    return ϵ
+    tolerance_pc = LinearAlgebra.norm(A*x - b, 2)
+    tolerance_x = LinearAlgebra.norm(project_nonnegative(-x), 2)
+    tolerance_z = LinearAlgebra.norm(project_nonnegative(-z), 2)
+    return ϵ, tolerance_pc, tolerance_x, tolerance_z
 end
 
 # Write a function that will take a large matrix which is of type SparseArrays.SparseMatrixCSC{T,Int} and compute its maximum singular value using any Julia package that is suitable to solve this problem
@@ -86,9 +89,13 @@ setting = PDHG_settings(maxit=100000, tol=1e-4, verbose=false, freq=1000)
 mutable struct PDHG_state{T <: AbstractVecOrMat{<: Real}, I <: Integer} # contains information regarding one iterattion sequence
     x::T # iterate x_n
     y::T # iterate y_n
+    z::T # iterate z_n
     η::Float64 # step size
     τ::Float64 # step size
     k::I # iteration counter  
+    st::MOI.TerminationStatusCode # termination status
+    sp::MOI.ResultStatusCode # primal status
+    sd::MOI.ResultStatusCode # dual status
 end
 
 # We need a method to construct the initial value of the type PDHG_state
@@ -101,7 +108,7 @@ function PDHG_state(problem::LP_Data)
     τ_preli = (1/(σmaxA)) - 1e-6
     x_0 = zeros(n)
     y_0 = zeros(m)
-    return PDHG_state(x_0, y_0, η_preli, τ_preli, 1)
+    return PDHG_state(x_0, y_0, problem.c, η_preli, τ_preli, 1, MOI.OPTIMIZE_NOT_CALLED, MOI.UNKNOWN_RESULT_STATUS, MOI.UNKNOWN_RESULT_STATUS)
 end
 
 # Write one iteration of PDHG
@@ -111,22 +118,25 @@ function PDHG_iteration!(problem::LP_Data, state::PDHG_state)
     # unpack the current state information
     x_k = state.x
     y_k = state.y
+    z_k = state.z
     k = state.k
 
     # compute the next iterate
 
     # compute x_k_plus_1 = x_k - η*problem.A'*y_k- η*c
-    x_k_plus_1 = x_k - state.η*(problem.A'*y_k)- state.η*problem.c
+    x_k_plus_1 = x_k - state.η*z_k
 
     # project on to the positive orthant
     project_nonnegative!(x_k_plus_1)
 
     # compute y_k_plus_1 = y + τ*A*(2*x_k_plus_1 - x_k) - τ*b
     y_k_plus_1 = y_k + state.τ*problem.A*(2*x_k_plus_1 - x_k) - state.τ*problem.b
+    z_k_plus_1 = problem.c + problem.A'y_k_plus_1
 
     # load the computed values in the PDHG_state
     state.x = x_k_plus_1
     state.y = y_k_plus_1
+    state.z = z_k_plus_1
     state.k = k + 1
 
     # return the updated state
@@ -135,43 +145,62 @@ function PDHG_iteration!(problem::LP_Data, state::PDHG_state)
 end
 
 function PDHG_solver(problem::LP_Data, setting::PDHG_settings)
-   
-    @info "*******************************************************"
-    @info "SimplePDHG https://github.com/Shuvomoy/SimplePDHG.jl"
-    @info "*******************************************************"
-    
+    if setting.verbose == true
+        @info "*******************************************************"
+        @info "SimplePDHG https://github.com/Shuvomoy/SimplePDHG.jl"
+        @info "*******************************************************"
+    end
     # this is the function that the end user will use to solve a particular problem, internally it is using the previously defined types and functions to run 
     # PDHG algorithm
     # create the intial state
     state = PDHG_state(problem)
 
-    tolerance_current =  tolerance_LP(problem.A, problem.b, problem.c, state.x, state.y)
+    tc, tpc, tx, tz =  tolerance_LP(problem.A, problem.b, problem.c, state.x, state.y, state.z)
+    # NOTE: only tc is used for termination
     
     ## time to run the loop
-    while  (state.k < setting.maxit) &&  tolerance_current > setting.tol
-        # compute a new state
-        state =  PDHG_iteration!(problem, state)
-        tolerance_current =  tolerance_LP(problem.A, problem.b, problem.c, state.x, state.y)
+    while  (state.k < setting.maxit) &&  tc > setting.tol
         # print information if verbose = true
         if setting.verbose == true
             if mod(state.k, setting.freq) == 0
-                @info "iteration = $(state.k) | obj val = $(problem.c'*state.x) | optimality_tolerance = $(tolerance_current)"
+                @info "$(state.k) | $(problem.c'*state.x) | opt $(tc) | tpc $(tpc) | tx $(tx) | tz $(tz)"
             end
         end
+        # compute a new state
+        state =  PDHG_iteration!(problem, state)
+        tc, tpc, tx, tz =  tolerance_LP(problem.A, problem.b, problem.c, state.x, state.y, state.z)
     end
-    
-    # print information regarding the final state
-    @info "=================================================================="
 
-    @info "[🌹 ]                  FINAL ITERATION INFORMATION"
+    if setting.verbose == true
+        # print information regarding the final state
+        @info "=================================================================="
 
-    @info "=================================================================="
-    
-    @info "iteration = $(state.k) | obj val = $(problem.c'*state.x) | optimality_tolerance = $(tolerance_current)"
+        @info "[🌹 ]                  FINAL ITERATION INFORMATION"
 
-    tolerance_final = tolerance_current  
+        @info "=================================================================="
+        
+        @info "$(state.k) | $(problem.c'*state.x) | opt $(tc) | tpc $(tpc) | tx $(tx) | tz $(tz)"
+    end
 
-    return state, tolerance_final
+    if tc ≤ setting.tol
+        state.st = MOI.OPTIMAL
+    else
+        state.st = MOI.ITERATION_LIMIT
+    end
+
+    if tpc ≤ setting.tol && tx ≤ setting.tol
+        state.sp = MOI.FEASIBLE_POINT
+    else
+        state.sp = MOI.NEARLY_FEASIBLE_POINT
+    end
+
+    if tz ≤ setting.tol
+        state.sd = MOI.FEASIBLE_POINT
+    else
+        state.sd = MOI.NEARLY_FEASIBLE_POINT
+    end
+
+    return state, tc
     
 end
 
@@ -180,24 +209,16 @@ function solve_pdhg(
     A::SparseArrays.SparseMatrixCSC{Float64,Int},
     b::Vector{Float64},
     c::Vector{Float64},
-)::Tuple{MOI.TerminationStatusCode,Vector{Float64}}
+    settings::PDHG_settings,
+)::Tuple{MOI.TerminationStatusCode,MOI.ResultStatusCode,MOI.ResultStatusCode,Vector{Float64},Vector{Float64},Vector{Float64}}
 
     # create the data object
-    status = MOI.OTHER_ERROR
     m, n = size(A)
     problem = LP_Data(c, A, b, m, n)
-    # create the setting data structure
-    setting = PDHG_settings(maxit=100000, tol=1e-4, verbose=true, freq=1000)
     # solve the problem
-    state, tol_final = PDHG_solver(problem, setting)
-    # get the optimal value and solution
-    x_star = state.x
-    obj_value_PDHG = problem.c'*state.x
-    if abs(tol_final) < 1e-4
-        status = MOI.OPTIMAL
-    end
+    state, _ = PDHG_solver(problem, settings)
 
-    return status, x_star
+    return state.st, state.sp, state.sd, state.x, state.y, state.z
 end
 
 
@@ -232,10 +253,23 @@ end
 
 mutable struct Optimizer <: MOI.AbstractOptimizer
     x_primal::Dict{MOI.VariableIndex,Float64}
+    y_dual::Dict{MOI.ConstraintIndex,Float64}
+    z_dual::Dict{MOI.ConstraintIndex,Float64}
     termination_status::MOI.TerminationStatusCode
+    primal_status::MOI.ResultStatusCode
+    dual_status::MOI.ResultStatusCode
+    settings::PDHG_settings
 
     function Optimizer()
-        return new(Dict{MOI.VariableIndex,Float64}(), MOI.OPTIMIZE_NOT_CALLED)
+        return new(
+            Dict{MOI.VariableIndex,Float64}(),
+            Dict{MOI.ConstraintIndex,Float64}(),
+            Dict{MOI.ConstraintIndex,Float64}(),
+            MOI.OPTIMIZE_NOT_CALLED,
+            MOI.UNKNOWN_RESULT_STATUS,
+            MOI.UNKNOWN_RESULT_STATUS,
+            deepcopy(SimplePDHG.setting)
+        )
     end
 end
 
@@ -293,16 +327,34 @@ function MOI.optimize!(dest::Optimizer, src::MOI.ModelLike)
     if cache.objective.sense == MOI.MAX_SENSE
         c *= -1
     end
-    dest.termination_status, x_primal = solve_pdhg(A, b, c)
-    for x in MOI.get(src, MOI.ListOfVariableIndices())
-        dest.x_primal[x] = x_primal[index_map[x].value]
+    st, sp, sd, x, y, z = solve_pdhg(A, b, c, dest.settings)
+    for i in MOI.get(src, MOI.ListOfVariableIndices())
+        dest.x_primal[i] = x[index_map[i].value]
     end
+    for i in MOI.get(src, MOI.ListOfConstraintIndices{MOI.VectorAffineFunction{Float64},MOI.Zeros}())
+        dest.y_dual[i] = y[index_map[i].value]
+    end
+    for i in MOI.get(src, MOI.ListOfConstraintIndices{MOI.VectorOfVariables,MOI.Nonnegatives}())
+        dest.z_dual[i] = z[index_map[i].value]
+    end
+    dest.termination_status = st
+    dest.primal_status = sp
+    dest.dual_status = sd
     return index_map, false
 end
 
-function MOI.get(model::Optimizer, ::MOI.VariablePrimal, x::MOI.VariableIndex)
-    return model.x_primal[x]
+MOI.get(model::Optimizer, attr::MOI.RawOptimizerAttribute) = getfield(model.settings, Symbol(attr.name))
+MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value) = setfield!(model.settings, Symbol(attr.name), value)
+MOI.get(model::Optimizer, ::MOI.Silent) = !model.settings.verbose
+
+function MOI.set(model::Optimizer, ::MOI.Silent, value)
+    model.settings.verbose = !value
 end
+
+
+MOI.get(model::Optimizer, ::MOI.VariablePrimal, x::MOI.VariableIndex) = model.x_primal[x]
+MOI.get(model::Optimizer, ::MOI.ConstraintDual, x::MOI.ConstraintIndex{MOI.VectorAffineFunction{Float64},MOI.Zeros}) = model.y_dual[x]
+MOI.get(model::Optimizer, ::MOI.ConstraintDual, x::MOI.ConstraintIndex{MOI.VectorOfVariables,MOI.Nonnegatives}) = model.z_dual[x]
 
 #
 
@@ -317,16 +369,8 @@ end
 #
 
 MOI.get(model::Optimizer, ::MOI.TerminationStatus) = model.termination_status
-
-function MOI.get(model::Optimizer, ::MOI.PrimalStatus)
-    if model.termination_status == MOI.OPTIMAL
-        return MOI.FEASIBLE_POINT
-    else
-        return MOI.NO_SOLUTION
-    end
-end
-
-MOI.get(model::Optimizer, ::MOI.DualStatus) = MOI.NO_SOLUTION
+MOI.get(model::Optimizer, ::MOI.PrimalStatus) = model.primal_status
+MOI.get(model::Optimizer, ::MOI.DualStatus) = model.dual_status
 
 MOI.get(::Optimizer, ::MOI.SolverName) = "PDHG"
 
