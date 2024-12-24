@@ -38,37 +38,37 @@ function tolerance_LP(A::SparseArrays.SparseMatrixCSC{T,Int}, b::AbstractVector{
     return ϵ, tolerance_pc, tolerance_x, tolerance_z
 end
 
-# Write one iteration of PDHG
-function PDHG_iteration!(problem::LP_Data, state::PDHG_state)
-
-    # unpack the current state information
-    x_k = state.x
-    y_k = state.y
-    z_k = state.z
-    k = state.k
-
-    # compute the next iterate
-
-    # compute x_k_plus_1 = x_k - η*problem.A'*y_k- η*c
-    x_k_plus_1 = x_k - state.η*z_k
-
-    # project on to the positive orthant
-    project_nonnegative!(x_k_plus_1)
-
-    # compute y_k_plus_1 = y + τ*A*(2*x_k_plus_1 - x_k) - τ*b
-    y_k_plus_1 = y_k + state.τ*problem.A*(2*x_k_plus_1 - x_k) - state.τ*problem.b
-    z_k_plus_1 = problem.c + problem.A'y_k_plus_1
-
-    # load the computed values in the PDHG_state
-    state.x = x_k_plus_1
-    state.y = y_k_plus_1
-    state.z = z_k_plus_1
-    state.k = k + 1
-
-    # return the updated state
-    return state
-
+mutable struct PDHG_step{T}
+    Δx::T
+    Δy::T
+    Δz::T
 end
+
+function PDHG_step(problem::LP_Data, state::PDHG_state)
+    xnew = state.x - state.η*state.z
+    project_nonnegative!(xnew)
+    Δx = xnew - state.x
+
+    Δy = state.τ*problem.A*(2*xnew - state.x) - state.τ*problem.b
+
+    znew = problem.c + problem.A'*(state.y + Δy)
+    Δz = znew - state.z
+
+    return PDHG_step(Δx, Δy, Δz)
+end
+
+function apply_step!(state::PDHG_state, step::PDHG_step)
+    state.x += step.Δx
+    state.y += step.Δy
+    state.z += step.Δz
+    state.k += 1
+end
+
+function PDHG_iteration!(problem::LP_Data, state::PDHG_state)
+    step = PDHG_step(problem, state)
+    apply_step!(state, step)
+end
+
 
 function PDHG_solver(problem::LP_Data, setting::PDHG_settings)
     if setting.verbose == true
@@ -94,18 +94,16 @@ function PDHG_solver(problem::LP_Data, setting::PDHG_settings)
             end
         end
         # compute a new state
-        state = PDHG_iteration!(problem, state)
+        PDHG_iteration!(problem, state)
         tc, tpc, tx, tz =  tolerance_LP(problem.A, problem.b, problem.c, state.x, state.y, state.z)
     end
     ts = time() - start_time
 
     if setting.verbose == true
         # print information regarding the final state
-        @info "=================================================================="
-
-        @info "[🌹 ]                  FINAL ITERATION INFORMATION"
-
-        @info "=================================================================="
+        @info "==============================================================="
+        @info "[🌹 ]             FINAL ITERATION INFORMATION"
+        @info "==============================================================="
         
         @info "$(state.k) | $(problem.c'*state.x) | opt $(tc) | tpc $(tpc) | tx $(tx) | tz $(tz)"
     end
