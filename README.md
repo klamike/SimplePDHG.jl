@@ -1,6 +1,13 @@
 # SimplePDHG.jl
 
-
+> [!NOTE]
+> This is a fork of the original [Shuvomoy/SimplePDHG.jl](https://github.com/Shuvomoy/SimplePDHG.jl) with the following changes:
+> - Support querying dual solution
+> - Set solver settings via MOI attributes
+> - Support SolveTimeSec, Silent
+> - Better termination/result status
+>
+> The original README follows.
 
 I wrote this simple educational Julia package (less than 350 lines of code) for the MIT Course 15.084/6.7220 Nonlinear Optimization. The purpose of this package is to demonstrate to the students how simple it is to implement an optimization algorithm in  [Julia](https://julialang.org/) and connect it to the optimization modeling language [`JuMP`](https://jump.dev/) so that anyone can use your algorithm.
 
