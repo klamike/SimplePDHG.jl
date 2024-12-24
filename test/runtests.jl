@@ -35,7 +35,7 @@ using Test
     setting = PDHG_settings(maxit=100000, tol=tol_default, verbose=true, freq=10000)
 
     # solve the problem
-    state, tol_final = PDHG_solver(problem, setting)
+    state, tol_final, _ = PDHG_solver(problem, setting)
 
     @test tol_final < 1e-4
 
