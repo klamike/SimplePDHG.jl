@@ -9,9 +9,9 @@ end
 # Write a julia struct that will take c which is a vector of length n, A which is a matrix of size m x n, and b which is a vector of length m
 
 struct LP_Data{T<:AbstractFloat, I <: Integer} 
-    c::Vector{T} # cost vector of length n
+    c::AbstractVector{T} # cost vector of length n
     A::SparseArrays.SparseMatrixCSC{T,Int} # date matrix of size m x n
-    b::Vector{T} # resource vector of length m
+    b::AbstractVector{T} # resource vector of length m
     m::I # number of rows of A
     n::I # number of columns of A
 end
