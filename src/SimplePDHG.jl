@@ -132,11 +132,11 @@ end
 
 
 function solve_pdhg(
-    A::SparseArrays.SparseMatrixCSC{Float64,Int},
-    b::Vector{Float64},
-    c::Vector{Float64},
+    A::SparseArrays.SparseMatrixCSC{T,Int},
+    b::Vector{T},
+    c::Vector{T},
     settings::PDHG_settings,
-)::Tuple{MOI.TerminationStatusCode,MOI.ResultStatusCode,MOI.ResultStatusCode,Vector{Float64},Vector{Float64},Vector{Float64}}
+) where T<:Real
 
     # create the data object
     m, n = size(A)
