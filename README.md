@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > This is a fork of the original [Shuvomoy/SimplePDHG.jl](https://github.com/Shuvomoy/SimplePDHG.jl) with the following changes:
-> - Support arbitrary arithmetic (except [Rational](https://github.com/klamike/SimplePDHG.jl/issues/1))
+> - Support arbitrary float arithmetic
 > - Support querying dual solution
 > - Set solver settings via MOI attributes
 > - Support SolveTimeSec, Silent
