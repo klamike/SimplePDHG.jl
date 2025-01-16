@@ -98,16 +98,16 @@ end
 
 end
 
-Ts = [(Float32, 1e-6), (Float64, 1e-10), (BigFloat, 1e-14)]#, (Rational{BigInt}, 1e-18)]
+Ts = [(Float32, 1e-6), (Float64, 1e-10), (BigFloat, 1e-14)]
 for (T, tol) in Ts
     @testset "JuMP $T" begin
         m = GenericModel{T}(optimizer_with_attributes(SimplePDHG.Optimizer{T}, "tol"=>tol, "maxit"=>1000000, "verbose"=>true, "freq"=>10000))
         @variable m x ≥ zero(T)
         @constraint m x == T(4//9)
-        @objective m Max x
+        @objective m Min x
         optimize!(m)
         @test termination_status(m) == MOI.OPTIMAL
-        @test isapprox(value(x), T(4//9), atol=tol*2)
+        @test isapprox(value(x), T(4//9), atol=tol)
         @test typeof(value(x)) == T
     end
 end
